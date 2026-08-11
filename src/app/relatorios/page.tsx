@@ -12,14 +12,12 @@ export default function DreRelatoriosPage() {
   const [ativos, setAtivos] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(true);
 
-  // Filtros
   const [mes, setMes] = useState(() => {
     const hoje = new Date();
     return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
   });
   const [ativoFiltro, setAtivoFiltro] = useState("TODOS");
 
-  // Estrutura do DRE
   const [dre, setDre] = useState({
     receitaBruta: 0,
     deducoes: 0,
@@ -46,36 +44,26 @@ export default function DreRelatoriosPage() {
     async function gerarDRE() {
       setCarregando(true);
 
-      // --- O SEGREDO DAS DATAS ---
-      // Descobre exatamente o primeiro e o último dia do mês selecionado
       const [ano, mesStr] = mes.split('-');
       const primeiroDia = `${ano}-${mesStr}-01`;
       const ultimoDia = new Date(Number(ano), Number(mesStr), 0).toISOString().split('T')[0];
 
-      // 1. Busca Receitas (Filtrando com Maior/Igual e Menor/Igual)
       let reqRec = supabase.from("receitas")
         .select("*")
         .gte("data_inicio", primeiroDia)
         .lte("data_inicio", ultimoDia);
       
       if (ativoFiltro !== "TODOS") reqRec = reqRec.eq("ativo_id", ativoFiltro);
-      
-      const { data: receitas, error: errRec } = await reqRec;
-      if (errRec) console.error("Erro ao buscar receitas:", errRec);
+      const { data: receitas } = await reqRec;
 
-      // 2. Busca Despesas (Filtrando com Maior/Igual e Menor/Igual)
       let reqDesp = supabase.from("despesas")
         .select("valor, categorias_despesa(dre_grupos(tipo))")
         .gte("data_vencimento", primeiroDia)
         .lte("data_vencimento", ultimoDia);
       
       if (ativoFiltro !== "TODOS") reqDesp = reqDesp.eq("ativo_id", ativoFiltro);
-      
-      const { data: despesas, error: errDesp } = await reqDesp;
-      if (errDesp) console.error("Erro ao buscar despesas:", errDesp);
+      const { data: despesas } = await reqDesp;
 
-
-      // --- MATEMÁTICA DO DRE ---
       let rBruta = 0, deduc = 0, cDireto = 0, dFixa = 0, imp = 0, distLucro = 0;
 
       (receitas || []).forEach(r => {
@@ -84,7 +72,8 @@ export default function DreRelatoriosPage() {
       });
 
       (despesas || []).forEach(d => {
-        const tipo = d.categorias_despesa?.dre_grupos?.tipo;
+        // Tipagem segura com (d as any) para evitar erro do TypeScript
+        const tipo = (d as any).categorias_despesa?.dre_grupos?.tipo;
         const valor = Number(d.valor || 0);
         
         if (tipo === 'CUSTO_DIRETO') cDireto += valor;
@@ -123,7 +112,6 @@ export default function DreRelatoriosPage() {
 
   return (
     <div className="space-y-6">
-      
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
@@ -229,7 +217,6 @@ export default function DreRelatoriosPage() {
           </div>
         </div>
       </div>
-
     </div>
   );
 }

@@ -43,7 +43,6 @@ export default function DespesasPage() {
     carregarListasBasicas();
   }, [supabase]);
 
-  // Busca as despesas sempre que um filtro mudar
   useEffect(() => {
     carregarTabela();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -55,12 +54,10 @@ export default function DespesasPage() {
       .select("*, ativos(nome), categorias_despesa(nome, dre_grupos(nome))")
       .order("data_vencimento", { ascending: false });
 
-    // Filtro de Ativo
     if (filtroAtivo !== "TODOS") {
       req = req.eq("ativo_id", filtroAtivo === "NENHUM" ? null : filtroAtivo);
     }
 
-    // Filtro de Datas
     if (tipoData === "MES" && mesFiltro) {
       const [anoStr, mesStr] = mesFiltro.split('-');
       const pDia = `${anoStr}-${mesStr}-01`;
@@ -176,7 +173,6 @@ export default function DespesasPage() {
         </CardContent>
       </Card>
 
-      {/* HISTÓRICO COM FILTROS */}
       <Card>
         <CardHeader className="bg-slate-50 border-b border-slate-100 rounded-t-xl py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-center gap-2">
@@ -256,8 +252,9 @@ export default function DespesasPage() {
                         </span>
                       )}
                     </td>
+                    {/* CORRIGIDO DE r.id PARA d.id */}
                     <td className="px-6 py-4 flex justify-center">
-                      <button onClick={() => excluirDespesa(r.id)} className="text-slate-400 hover:text-red-600 transition-colors">
+                      <button onClick={() => excluirDespesa(d.id)} className="text-slate-400 hover:text-red-600 transition-colors">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </td>

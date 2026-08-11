@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "../../lib/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { Activity, Filter, Calendar, Building, Ship, DollarSign, TrendingUp, Clock, Users } from "lucide-react";
+import { Activity, Filter, Building, TrendingUp, Clock, DollarSign } from "lucide-react";
 
 const brl = (valor: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
 
@@ -12,7 +12,6 @@ export default function RelatorioOperacionalPage() {
   const [ativos, setAtivos] = useState<any[]>([]);
   const [ativoSelecionado, setAtivoSelecionado] = useState<any>(null);
 
-  // Filtros
   const [ativoId, setAtivoId] = useState("");
   const [tipoFiltroData, setTipoFiltroData] = useState("MES");
   const [mesFiltro, setMesFiltro] = useState(() => {
@@ -22,19 +21,16 @@ export default function RelatorioOperacionalPage() {
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
 
-  // Dados calculados para o relatório
   const [receitas, setReceitas] = useState<any[]>([]);
   const [despesasMesTotal, setDespesasMesTotal] = useState(0);
   const [totalHorasRodadas, setTotalHorasRodadas] = useState(0);
   const [faturamentoTotal, setFaturamentoTotal] = useState(0);
   const [faturamentoLiquido, setFaturamentoLiquido] = useState(0);
 
-  // Indicadores de Investimento & ROI
   const [retornoAcumulado, setRetornoAcumulado] = useState(0);
   const [paybackMeses, setPaybackMeses] = useState(0);
   const [multiplicadorRoi, setMultiplicadorRoi] = useState(0);
 
-  // Carrega lista de ativos
   useEffect(() => {
     async function carregarAtivos() {
       const { data } = await supabase.from("ativos").select("*").order("nome");
@@ -46,7 +42,6 @@ export default function RelatorioOperacionalPage() {
     carregarAtivos();
   }, [supabase]);
 
-  // Carrega e processa os dados do relatório quando os filtros mudam
   useEffect(() => {
     if (!ativoId) return;
 
@@ -54,7 +49,6 @@ export default function RelatorioOperacionalPage() {
       const atv = ativos.find(a => String(a.id) === String(ativoId));
       setAtivoSelecionado(atv);
 
-      // Define o intervalo de datas
       let pDia = "";
       let uDia = "";
 
@@ -67,7 +61,6 @@ export default function RelatorioOperacionalPage() {
         uDia = dataFim || "2100-12-31";
       }
 
-      // 1. Busca Receitas do Ativo no Período
       const { data: recs } = await supabase.from("receitas")
         .select("*")
         .eq("ativo_id", Number(ativoId))
@@ -78,16 +71,11 @@ export default function RelatorioOperacionalPage() {
       setReceitas(recs || []);
 
       let fatBruto = 0;
-      let totalDiasEstadia = 0;
       (recs || []).forEach(r => {
         fatBruto += Number(r.valor_liquido || 0);
-        if (atv?.tipo === 'IMOVEL') {
-          totalDiasEstadia += Number(r.duracao_medida || 0);
-        }
       });
       setFaturamentoTotal(fatBruto);
 
-      // 2. Busca Despesas do Ativo no Mês/Período (EXCLUINDO Distribuição de Lucro)
       const { data: desps } = await supabase.from("despesas")
         .select("valor, categorias_despesa(dre_grupos(tipo))")
         .eq("ativo_id", Number(ativoId))
@@ -96,7 +84,8 @@ export default function RelatorioOperacionalPage() {
 
       let somaDespesas = 0;
       (desps || []).forEach(d => {
-        const tipoGrupo = d.categorias_despesa?.dre_grupos?.tipo;
+        // Tipagem segura com (d as any)
+        const tipoGrupo = (d as any).categorias_despesa?.dre_grupos?.tipo;
         if (tipoGrupo !== 'DISTRIBUICAO_LUCRO') {
           somaDespesas += Number(d.valor || 0);
         }
@@ -104,7 +93,6 @@ export default function RelatorioOperacionalPage() {
       setDespesasMesTotal(somaDespesas);
       setFaturamentoLiquido(fatBruto - somaDespesas);
 
-      // 3. Se for Embarcação, busca horas rodadas no operacional
       let horas = 0;
       if (atv?.tipo === 'EMBARCACAO') {
         const { data: ops } = await supabase.from("operacional")
@@ -119,8 +107,6 @@ export default function RelatorioOperacionalPage() {
       }
       setTotalHorasRodadas(horas);
 
-      // 4. Cálculo de Retorno Histórico Global para ROI & Payback
-      // Retorno Acumulado = Soma de todo o líquido gerado por este ativo na história do sistema
       const { data: todasRecsAtivo } = await supabase.from("receitas").select("valor_liquido").eq("ativo_id", Number(ativoId));
       const { data: todasDespsAtivo } = await supabase.from("despesas").select("valor, categorias_despesa(dre_grupos(tipo))").eq("ativo_id", Number(ativoId));
       
@@ -128,7 +114,7 @@ export default function RelatorioOperacionalPage() {
       (todasRecsAtivo || []).forEach(r => totRecHistorico += Number(r.valor_liquido || 0));
       let totDespHistorico = 0;
       (todasDespsAtivo || []).forEach(d => {
-        if (d.categorias_despesa?.dre_grupos?.tipo !== 'DISTRIBUICAO_LUCRO') {
+        if ((d as any).categorias_despesa?.dre_grupos?.tipo !== 'DISTRIBUICAO_LUCRO') {
           totDespHistorico += Number(d.valor || 0);
         }
       });
@@ -139,7 +125,6 @@ export default function RelatorioOperacionalPage() {
       const inv = Number(atv?.investimento || 0);
       if (inv > 0) {
         setMultiplicadorRoi(retornoLiquidoHistorico / inv);
-        // Payback estimado em meses baseado na média do mês atual (ou líquido atual)
         const liquidoAtual = fatBruto - somaDespesas;
         if (liquidoAtual > 0) {
           setPaybackMeses(inv / liquidoAtual);
@@ -155,17 +140,12 @@ export default function RelatorioOperacionalPage() {
     processarRelatorio();
   }, [ativoId, tipoFiltroData, mesFiltro, dataInicio, dataFim, ativos, supabase]);
 
-  // Cálculos específicos para Imóveis (Média diária de despesas)
   const totalDiasPeriodo = receitas.reduce((acc, r) => acc + Number(r.duracao_medida || 0), 0);
   const despesaMediaPorDia = totalDiasPeriodo > 0 ? despesasMesTotal / totalDiasPeriodo : 0;
-
-  // Cálculos específicos para Embarcações (Faturamento por hora)
   const faturamentoPorHora = totalHorasRodadas > 0 ? faturamentoTotal / totalHorasRodadas : 0;
 
   return (
     <div className="space-y-6">
-      
-      {/* CABEÇALHO E FILTROS */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
@@ -204,7 +184,6 @@ export default function RelatorioOperacionalPage() {
         </div>
       </div>
 
-      {/* BLOCO DE INVESTIMENTO & ROI (Sempre visível) */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="border-l-4 border-l-blue-500 shadow-sm">
           <CardHeader className="pb-2"><CardTitle className="text-xs font-bold text-slate-500 uppercase">Valor Investido</CardTitle></CardHeader>
@@ -224,7 +203,6 @@ export default function RelatorioOperacionalPage() {
         </Card>
       </div>
 
-      {/* CONDIÇÃO 1: SE FOR IMÓVEL (Airbnb / Casas) */}
       {ativoSelecionado?.tipo === 'IMOVEL' && (
         <div className="space-y-6">
           <Card className="shadow-sm border-slate-200">
@@ -282,7 +260,6 @@ export default function RelatorioOperacionalPage() {
         </div>
       )}
 
-      {/* CONDIÇÃO 2: SE FOR EMBARCAÇÃO (Jet ski / Lanchas) */}
       {ativoSelecionado?.tipo === 'EMBARCACAO' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -334,7 +311,6 @@ export default function RelatorioOperacionalPage() {
           </Card>
         </div>
       )}
-
     </div>
   );
 }
