@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -29,7 +30,8 @@ export default function DreRelatoriosPage() {
     lucroLiquido: 0,
     distribuicaoLucro: 0,
     saldoCaixa: 0,
-    margemLucroPct: 0
+    margemLucroPct: 0,
+    saldoAcumulado: 0 // NOVO CAMPO
   });
 
   useEffect(() => {
@@ -48,6 +50,7 @@ export default function DreRelatoriosPage() {
       const primeiroDia = `${ano}-${mesStr}-01`;
       const ultimoDia = new Date(Number(ano), Number(mesStr), 0).toISOString().split('T')[0];
 
+      // --- CÁLCULO DO MÊS ATUAL ---
       let reqRec = supabase.from("receitas")
         .select("*")
         .gte("data_inicio", primeiroDia)
@@ -72,7 +75,6 @@ export default function DreRelatoriosPage() {
       });
 
       (despesas || []).forEach(d => {
-        // Tipagem segura com (d as any) para evitar erro do TypeScript
         const tipo = (d as any).categorias_despesa?.dre_grupos?.tipo;
         const valor = Number(d.valor || 0);
         
@@ -88,6 +90,30 @@ export default function DreRelatoriosPage() {
       const sCaixa = lucroLiq - distLucro;
       const margemPct = rLiquida > 0 ? (lucroLiq / rLiquida) * 100 : 0;
 
+      // --- CÁLCULO DO SALDO ACUMULADO (MESES ANTERIORES) ---
+      // Busca todas as receitas ANTES do mês selecionado
+      let reqRecAnt = supabase.from("receitas")
+        .select("*")
+        .lt("data_inicio", primeiroDia);
+      if (ativoFiltro !== "TODOS") reqRecAnt = reqRecAnt.eq("ativo_id", ativoFiltro);
+      const { data: recAnt } = await reqRecAnt;
+
+      // Busca todas as despesas ANTES do mês selecionado
+      let reqDespAnt = supabase.from("despesas")
+        .select("valor")
+        .lt("data_vencimento", primeiroDia);
+      if (ativoFiltro !== "TODOS") reqDespAnt = reqDespAnt.eq("ativo_id", ativoFiltro);
+      const { data: despAnt } = await reqDespAnt;
+
+      let totalRecAnt = 0;
+      (recAnt || []).forEach(r => totalRecAnt += Number(r.valor_liquido || 0));
+      
+      let totalDespAnt = 0;
+      (despAnt || []).forEach(d => totalDespAnt += Number(d.valor || 0));
+
+      const saldoAnterior = totalRecAnt - totalDespAnt;
+      const saldoAcumuladoFinal = saldoAnterior + sCaixa;
+
       setDre({
         receitaBruta: rBruta,
         deducoes: deduc,
@@ -99,7 +125,8 @@ export default function DreRelatoriosPage() {
         lucroLiquido: lucroLiq,
         distribuicaoLucro: distLucro,
         saldoCaixa: sCaixa,
-        margemLucroPct: margemPct
+        margemLucroPct: margemPct,
+        saldoAcumulado: saldoAcumuladoFinal
       });
 
       setCarregando(false);
@@ -193,11 +220,17 @@ export default function DreRelatoriosPage() {
               <span className="font-semibold text-slate-600"><span className="text-slate-400 mr-2">(-)</span> Distribuição de Lucro aos Sócios</span>
               <span className="font-bold text-red-500">-{brl(dre.distribuicaoLucro)}</span>
             </div>
+            
+            <div className="flex justify-between items-center px-6 py-4 border-b border-slate-100 hover:bg-slate-50 transition-colors">
+              <span className="font-semibold text-slate-600"><span className="text-slate-400 mr-2">(=)</span> Saldo Gerado no Mês</span>
+              <span className="font-bold text-slate-800">{brl(dre.saldoCaixa)}</span>
+            </div>
+
             <div className="flex justify-between items-center px-6 py-5 bg-[#1e40af] text-white shadow-inner">
               <span className="font-black uppercase text-base flex items-center gap-2">
-                <span className="text-blue-300">(=)</span> Saldo em Caixa Final
+                <span className="text-blue-300">(=)</span> Saldo Acumulado em Caixa
               </span>
-              <span className="font-black text-xl">{brl(dre.saldoCaixa)}</span>
+              <span className="font-black text-xl">{brl(dre.saldoAcumulado)}</span>
             </div>
 
           </div>
