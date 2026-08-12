@@ -11,6 +11,7 @@ export default function Dashboard() {
   const supabase = createClient();
   const [carregando, setCarregando] = useState(true);
   const [ativos, setAtivos] = useState<any[]>([]);
+  const [perfilUsuario, setPerfilUsuario] = useState<any>(null);
   
   // Filtros do Dashboard
   const [ativoFiltro, setAtivoFiltro] = useState("TODOS");
@@ -31,18 +32,34 @@ export default function Dashboard() {
   // Tabela rápida
   const [ultimasDespesas, setUltimasDespesas] = useState<any[]>([]);
 
-  // Carrega lista de ativos no início
+  // 1. CARREGA AS PERMISSÕES E OS ATIVOS DISPONÍVEIS LOGO NO INÍCIO
   useEffect(() => {
-    async function carregarAtivos() {
-      const { data } = await supabase.from("ativos").select("id, nome").order("nome");
-      setAtivos(data || []);
+    async function carregarDadosIniciais() {
+      const { data: { user } } = await supabase.auth.getUser();
+      let perfilData = null;
+      if (user) {
+        const { data } = await supabase.from("perfis_usuarios").select("*").eq("id", user.id).single();
+        perfilData = data;
+        setPerfilUsuario(data);
+      }
+
+      const { data: atvs } = await supabase.from("ativos").select("id, nome").order("nome");
+      let listaAtivos = atvs || [];
+
+      // SE O USUÁRIO TIVER RESTRIÇÕES, FILTRAMOS A LISTA DO MENU
+      if (perfilData && !perfilData.is_admin && perfilData.ativos_permitidos?.length > 0) {
+        listaAtivos = listaAtivos.filter(a => perfilData.ativos_permitidos.includes(a.id));
+      }
+      setAtivos(listaAtivos);
     }
-    carregarAtivos();
+    carregarDadosIniciais();
   }, [supabase]);
 
-  // Carrega os dados sempre que um filtro muda
+  // 2. BUSCA OS DADOS (RESPEITANDO AS RESTRIÇÕES DO PERFIL)
   useEffect(() => {
     async function carregarDashboard() {
+      if (!perfilUsuario) return; // Aguarda carregar o perfil antes de buscar dados financeiros
+
       setCarregando(true);
 
       let pDia = "2000-01-01";
@@ -55,7 +72,7 @@ export default function Dashboard() {
       }
 
       // ==========================================
-      // 1. CÁLCULO DO PERÍODO SELECIONADO
+      // CÁLCULO DO PERÍODO SELECIONADO
       // ==========================================
       let reqRecPeriodo = supabase.from("receitas").select("valor_liquido").gte("data_inicio", pDia).lte("data_inicio", uDia);
       let reqDespPeriodo = supabase.from("despesas")
@@ -64,9 +81,14 @@ export default function Dashboard() {
         .lte("data_vencimento", uDia)
         .order("data_vencimento", { ascending: true });
 
+      // APLICA AS RESTRIÇÕES DE SEGURANÇA NAS QUERIES
       if (ativoFiltro !== "TODOS") {
         reqRecPeriodo = reqRecPeriodo.eq("ativo_id", ativoFiltro);
         reqDespPeriodo = reqDespPeriodo.eq("ativo_id", ativoFiltro);
+      } else if (!perfilUsuario.is_admin && perfilUsuario.ativos_permitidos?.length > 0) {
+        // Se escolheu "TODOS" mas é um usuário restrito, obrigamos a buscar apenas os permitidos
+        reqRecPeriodo = reqRecPeriodo.in("ativo_id", perfilUsuario.ativos_permitidos);
+        reqDespPeriodo = reqDespPeriodo.in("ativo_id", perfilUsuario.ativos_permitidos);
       }
 
       const { data: recPeriodo } = await reqRecPeriodo;
@@ -82,19 +104,21 @@ export default function Dashboard() {
         if (d.status === "PENDENTE") despPendentesPeriodo += Number(d.valor || 0);
       });
 
-      // Pega as despesas do período para a tabela (limite de 6 para não quebrar o layout)
       setUltimasDespesas((despPeriodo || []).slice(0, 6));
 
       // ==========================================
-      // 2. CÁLCULO DO SALDO ACUMULADO (HISTÓRICO ATÉ U-DIA)
+      // CÁLCULO DO SALDO ACUMULADO (HISTÓRICO)
       // ==========================================
-      // Isso garante que o Caixa bata exatamente com o DRE
       let reqRecAcum = supabase.from("receitas").select("valor_liquido").lte("data_inicio", uDia);
       let reqDespAcum = supabase.from("despesas").select("valor").lte("data_vencimento", uDia);
 
+      // APLICA AS RESTRIÇÕES DE SEGURANÇA NAS QUERIES ACUMULADAS
       if (ativoFiltro !== "TODOS") {
         reqRecAcum = reqRecAcum.eq("ativo_id", ativoFiltro);
         reqDespAcum = reqDespAcum.eq("ativo_id", ativoFiltro);
+      } else if (!perfilUsuario.is_admin && perfilUsuario.ativos_permitidos?.length > 0) {
+        reqRecAcum = reqRecAcum.in("ativo_id", perfilUsuario.ativos_permitidos);
+        reqDespAcum = reqDespAcum.in("ativo_id", perfilUsuario.ativos_permitidos);
       }
 
       const { data: recAcum } = await reqRecAcum;
@@ -108,9 +132,6 @@ export default function Dashboard() {
 
       const saldoFinalHistorico = totalRecAcum - totalDespAcum;
 
-      // ==========================================
-      // ATUALIZA OS ESTADOS
-      // ==========================================
       setResumo({
         receitaLiquidaPeriodo: recLiqPeriodo,
         despesasPagasPeriodo: despPagasPeriodo,
@@ -122,7 +143,7 @@ export default function Dashboard() {
     }
 
     carregarDashboard();
-  }, [mes, tipoData, ativoFiltro, supabase]);
+  }, [mes, tipoData, ativoFiltro, supabase, perfilUsuario]);
 
   return (
     <div className="space-y-6">
