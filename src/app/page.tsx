@@ -3,82 +3,160 @@
 import { useEffect, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { DollarSign, TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Wallet } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Wallet, Filter, LayoutDashboard } from "lucide-react";
 
 const brl = (valor: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
 
 export default function Dashboard() {
   const supabase = createClient();
   const [carregando, setCarregando] = useState(true);
+  const [ativos, setAtivos] = useState<any[]>([]);
   
-  // Resumo do Mês
-  const [resumo, setResumo] = useState({
-    receitaLiquida: 0,
-    despesasPagas: 0,
-    despesasPendentes: 0,
-    saldoMes: 0
+  // Filtros do Dashboard
+  const [ativoFiltro, setAtivoFiltro] = useState("TODOS");
+  const [tipoData, setTipoData] = useState("MES");
+  const [mes, setMes] = useState(() => {
+    const hoje = new Date();
+    return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  // Últimas Movimentações para a tabela rápida
+  // Resumo dos KPIs
+  const [resumo, setResumo] = useState({
+    receitaLiquidaPeriodo: 0,
+    despesasPagasPeriodo: 0,
+    despesasPendentesPeriodo: 0,
+    saldoAcumuladoHistorico: 0
+  });
+
+  // Tabela rápida
   const [ultimasDespesas, setUltimasDespesas] = useState<any[]>([]);
 
+  // Carrega lista de ativos no início
+  useEffect(() => {
+    async function carregarAtivos() {
+      const { data } = await supabase.from("ativos").select("id, nome").order("nome");
+      setAtivos(data || []);
+    }
+    carregarAtivos();
+  }, [supabase]);
+
+  // Carrega os dados sempre que um filtro muda
   useEffect(() => {
     async function carregarDashboard() {
-      // O SEGREDO DAS DATAS: Descobre o primeiro e último dia do mês atual
-      const dataAtual = new Date();
-      const ano = dataAtual.getFullYear();
-      const mes = String(dataAtual.getMonth() + 1).padStart(2, '0');
-      
-      const primeiroDia = `${ano}-${mes}-01`;
-      const ultimoDia = new Date(ano, Number(mes), 0).toISOString().split('T')[0];
+      setCarregando(true);
 
-      // 1. Busca Receitas do mês (Filtro Inteligente de Datas)
-      const { data: receitas } = await supabase
-        .from("receitas")
-        .select("valor_liquido")
-        .gte("data_inicio", primeiroDia)
-        .lte("data_inicio", ultimoDia);
-      
-      // 2. Busca Despesas do mês (Filtro Inteligente de Datas)
-      const { data: despesas } = await supabase
-        .from("despesas")
+      let pDia = "2000-01-01";
+      let uDia = "2100-12-31";
+
+      if (tipoData === "MES" && mes) {
+        const [anoStr, mesStr] = mes.split('-');
+        pDia = `${anoStr}-${mesStr}-01`;
+        uDia = new Date(Number(anoStr), Number(mesStr), 0).toISOString().split('T')[0];
+      }
+
+      // ==========================================
+      // 1. CÁLCULO DO PERÍODO SELECIONADO
+      // ==========================================
+      let reqRecPeriodo = supabase.from("receitas").select("valor_liquido").gte("data_inicio", pDia).lte("data_inicio", uDia);
+      let reqDespPeriodo = supabase.from("despesas")
         .select("id, descricao, valor, status, data_vencimento, categorias_despesa(nome)")
-        .gte("data_vencimento", primeiroDia)
-        .lte("data_vencimento", ultimoDia)
+        .gte("data_vencimento", pDia)
+        .lte("data_vencimento", uDia)
         .order("data_vencimento", { ascending: true });
 
-      // Matemática do Dashboard
-      let totalReceitas = 0;
-      let totalPagas = 0;
-      let totalPendentes = 0;
+      if (ativoFiltro !== "TODOS") {
+        reqRecPeriodo = reqRecPeriodo.eq("ativo_id", ativoFiltro);
+        reqDespPeriodo = reqDespPeriodo.eq("ativo_id", ativoFiltro);
+      }
 
-      (receitas || []).forEach(r => totalReceitas += Number(r.valor_liquido));
-      
-      (despesas || []).forEach(d => {
-        if (d.status === "PAGO") totalPagas += Number(d.valor);
-        if (d.status === "PENDENTE") totalPendentes += Number(d.valor);
+      const { data: recPeriodo } = await reqRecPeriodo;
+      const { data: despPeriodo } = await reqDespPeriodo;
+
+      let recLiqPeriodo = 0;
+      recPeriodo?.forEach(r => recLiqPeriodo += Number(r.valor_liquido || 0));
+
+      let despPagasPeriodo = 0;
+      let despPendentesPeriodo = 0;
+      despPeriodo?.forEach(d => {
+        if (d.status === "PAGO") despPagasPeriodo += Number(d.valor || 0);
+        if (d.status === "PENDENTE") despPendentesPeriodo += Number(d.valor || 0);
       });
 
+      // Pega as despesas do período para a tabela (limite de 6 para não quebrar o layout)
+      setUltimasDespesas((despPeriodo || []).slice(0, 6));
+
+      // ==========================================
+      // 2. CÁLCULO DO SALDO ACUMULADO (HISTÓRICO ATÉ U-DIA)
+      // ==========================================
+      // Isso garante que o Caixa bata exatamente com o DRE
+      let reqRecAcum = supabase.from("receitas").select("valor_liquido").lte("data_inicio", uDia);
+      let reqDespAcum = supabase.from("despesas").select("valor").lte("data_vencimento", uDia);
+
+      if (ativoFiltro !== "TODOS") {
+        reqRecAcum = reqRecAcum.eq("ativo_id", ativoFiltro);
+        reqDespAcum = reqDespAcum.eq("ativo_id", ativoFiltro);
+      }
+
+      const { data: recAcum } = await reqRecAcum;
+      const { data: despAcum } = await reqDespAcum;
+
+      let totalRecAcum = 0;
+      recAcum?.forEach(r => totalRecAcum += Number(r.valor_liquido || 0));
+
+      let totalDespAcum = 0;
+      despAcum?.forEach(d => totalDespAcum += Number(d.valor || 0));
+
+      const saldoFinalHistorico = totalRecAcum - totalDespAcum;
+
+      // ==========================================
+      // ATUALIZA OS ESTADOS
+      // ==========================================
       setResumo({
-        receitaLiquida: totalReceitas,
-        despesasPagas: totalPagas,
-        despesasPendentes: totalPendentes,
-        saldoMes: totalReceitas - totalPagas
+        receitaLiquidaPeriodo: recLiqPeriodo,
+        despesasPagasPeriodo: despPagasPeriodo,
+        despesasPendentesPeriodo: despPendentesPeriodo,
+        saldoAcumuladoHistorico: saldoFinalHistorico
       });
 
-      // Pega só as 5 despesas mais urgentes para o painel
-      setUltimasDespesas((despesas || []).slice(0, 5));
       setCarregando(false);
     }
 
     carregarDashboard();
-  }, []);
+  }, [mes, tipoData, ativoFiltro, supabase]);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Visão Geral</h2>
-        <p className="text-sm text-slate-500 mt-1">Acompanhamento em tempo real do caixa deste mês.</p>
+      
+      {/* CABEÇALHO E FILTROS */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+            <LayoutDashboard className="w-6 h-6 text-blue-600" />
+            Visão Geral
+          </h2>
+          <p className="text-sm text-slate-500 mt-1">Acompanhamento financeiro em tempo real do seu caixa.</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
+          <Filter className="w-4 h-4 text-slate-400 ml-1" />
+          
+          <select value={ativoFiltro} onChange={e => setAtivoFiltro(e.target.value)}
+            className="h-9 px-3 rounded-md border border-slate-200 text-sm font-semibold text-slate-700 focus:ring-2 focus:ring-blue-600 outline-none">
+            <option value="TODOS">Consolidado (Todos)</option>
+            {ativos.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+          </select>
+
+          <select value={tipoData} onChange={e => setTipoData(e.target.value)}
+            className="h-9 px-3 rounded-md border border-slate-200 text-sm focus:ring-2 focus:ring-blue-600 outline-none">
+            <option value="MES">Por Mês</option>
+            <option value="TUDO">Acumulado Total</option>
+          </select>
+
+          {tipoData === "MES" && (
+            <input type="month" value={mes} onChange={e => setMes(e.target.value)}
+              className="h-9 px-3 rounded-md border border-slate-200 text-sm focus:ring-2 focus:ring-blue-600 outline-none" />
+          )}
+        </div>
       </div>
 
       {/* CARDS DE INDICADORES (KPIs) */}
@@ -90,19 +168,19 @@ export default function Dashboard() {
             <TrendingUp className="w-5 h-5 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-black text-slate-800">{brl(resumo.receitaLiquida)}</div>
-            <p className="text-xs text-slate-400 mt-1">Entradas do mês atual</p>
+            <div className="text-2xl font-black text-slate-800">{brl(resumo.receitaLiquidaPeriodo)}</div>
+            <p className="text-xs text-slate-400 mt-1">Entradas {tipoData === 'MES' ? 'neste mês' : 'totais'}</p>
           </CardContent>
         </Card>
 
-        <Card className="border-l-4 border-l-green-500 shadow-sm">
+        <Card className="border-l-4 border-l-green-500 shadow-sm bg-green-50/30">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-semibold text-slate-600 uppercase">Saldo em Caixa</CardTitle>
-            <Wallet className="w-5 h-5 text-green-500" />
+            <CardTitle className="text-sm font-bold text-green-700 uppercase">Saldo em Caixa</CardTitle>
+            <Wallet className="w-5 h-5 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-black text-green-600">{brl(resumo.saldoMes)}</div>
-            <p className="text-xs text-slate-400 mt-1">Receitas subtraindo despesas pagas</p>
+            <div className="text-2xl font-black text-green-700">{brl(resumo.saldoAcumuladoHistorico)}</div>
+            <p className="text-[11px] font-semibold text-green-600/70 mt-1 uppercase tracking-wide">Acumulado Histórico Real</p>
           </CardContent>
         </Card>
 
@@ -112,8 +190,8 @@ export default function Dashboard() {
             <AlertCircle className="w-5 h-5 text-amber-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-black text-amber-600">{brl(resumo.despesasPendentes)}</div>
-            <p className="text-xs text-slate-400 mt-1">Contas aguardando pagamento</p>
+            <div className="text-2xl font-black text-amber-600">{brl(resumo.despesasPendentesPeriodo)}</div>
+            <p className="text-xs text-slate-400 mt-1">Contas pendentes {tipoData === 'MES' ? 'neste mês' : 'no período'}</p>
           </CardContent>
         </Card>
 
@@ -123,19 +201,19 @@ export default function Dashboard() {
             <CheckCircle2 className="w-5 h-5 text-slate-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-black text-slate-700">{brl(resumo.despesasPagas)}</div>
-            <p className="text-xs text-slate-400 mt-1">Contas já quitadas no mês</p>
+            <div className="text-2xl font-black text-slate-700">{brl(resumo.despesasPagasPeriodo)}</div>
+            <p className="text-xs text-slate-400 mt-1">Contas quitadas {tipoData === 'MES' ? 'neste mês' : 'no período'}</p>
           </CardContent>
         </Card>
 
       </div>
 
-      {/* PAINEL DE CONTAS A PAGAR RÁPIDO */}
-      <Card className="shadow-sm border-slate-200">
+      {/* PAINEL DE CONTAS DO PERÍODO */}
+      <Card className={`shadow-sm border-slate-200 transition-opacity duration-500 ${carregando ? 'opacity-30' : 'opacity-100'}`}>
         <CardHeader className="bg-slate-50 border-b border-slate-100">
           <CardTitle className="text-base text-slate-700 flex items-center gap-2">
             <TrendingDown className="w-5 h-5 text-red-500" />
-            Próximos Vencimentos (Neste Mês)
+            Vencimentos e Despesas do Período
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -154,7 +232,7 @@ export default function Dashboard() {
                 {ultimasDespesas.map((d) => (
                   <tr key={d.id} className="hover:bg-slate-50">
                     <td className="px-6 py-4 font-medium text-slate-700">{d.data_vencimento.split("-").reverse().join("/")}</td>
-                    <td className="px-6 py-4 font-semibold text-slate-900">{d.descricao}</td>
+                    <td className="px-6 py-4 font-bold text-slate-900">{d.descricao}</td>
                     <td className="px-6 py-4 text-slate-500">{d.categorias_despesa?.nome}</td>
                     <td className="px-6 py-4 text-right font-bold text-red-600">{brl(d.valor)}</td>
                     <td className="px-6 py-4 text-center">
@@ -166,10 +244,10 @@ export default function Dashboard() {
                     </td>
                   </tr>
                 ))}
-                {ultimasDespesas.length === 0 && (
+                {ultimasDespesas.length === 0 && !carregando && (
                   <tr>
                     <td colSpan={5} className="px-6 py-8 text-center text-slate-400 italic">
-                      Nenhuma despesa lançada para este mês ainda.
+                      Nenhuma despesa localizada para os filtros atuais.
                     </td>
                   </tr>
                 )}
