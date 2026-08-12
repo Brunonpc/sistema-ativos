@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "../../lib/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { Receipt, Plus, Trash2, Calendar, Calculator, Filter } from "lucide-react";
+import { Receipt, Plus, Trash2, Calendar, Calculator, Filter, PlayCircle, StopCircle } from "lucide-react";
 
 const brl = (valor: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
 
@@ -19,11 +19,16 @@ export default function ReceitasPage() {
   const [cliente, setCliente] = useState("");
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
+  const [horimetroInicial, setHorimetroInicial] = useState("");
+  const [horimetroFinal, setHorimetroFinal] = useState("");
   const [duracao, setDuracao] = useState("");
   const [valorBruto, setValorBruto] = useState("");
   const [taxaPlataforma, setTaxaPlataforma] = useState("");
   const [taxaLimpeza, setTaxaLimpeza] = useState("");
   const [valorLiquido, setValorLiquido] = useState(0);
+
+  // Identifica automaticamente qual é o ativo selecionado para mudar o formulário
+  const ativoSelecionado = ativos.find(a => String(a.id) === String(ativoId));
 
   // Estados dos Filtros
   const [filtroAtivo, setFiltroAtivo] = useState("TODOS");
@@ -35,7 +40,7 @@ export default function ReceitasPage() {
   const [dataIniFiltro, setDataIniFiltro] = useState("");
   const [dataFimFiltro, setDataFimFiltro] = useState("");
 
-  // Carrega os ativos apenas uma vez ao abrir a tela
+  // Carrega os ativos
   useEffect(() => {
     async function carregarAtivos() {
       const { data } = await supabase.from("ativos").select("*").order("nome");
@@ -52,14 +57,12 @@ export default function ReceitasPage() {
 
   async function carregarTabela() {
     setCarregandoTabela(true);
-    let req = supabase.from("receitas").select("*, ativos(nome, metrica_padrao)").order("data_inicio", { ascending: false });
+    let req = supabase.from("receitas").select("*, ativos(nome, metrica_padrao, tipo)").order("data_inicio", { ascending: false });
 
-    // Filtro de Ativo
     if (filtroAtivo !== "TODOS") {
       req = req.eq("ativo_id", filtroAtivo);
     }
 
-    // Filtro de Datas
     if (tipoData === "MES" && mesFiltro) {
       const [anoStr, mesStr] = mesFiltro.split('-');
       const pDia = `${anoStr}-${mesStr}-01`;
@@ -75,16 +78,35 @@ export default function ReceitasPage() {
     setCarregandoTabela(false);
   }
 
-  // AUTOMAÇÃO DAS DATAS
+  // AUTOMAÇÃO DAS DATAS E HORÍMETRO (Inteligência do Ativo)
   useEffect(() => {
-    if (dataInicio && dataFim) {
-      const start = new Date(dataInicio);
-      const end = new Date(dataFim);
-      const diffTime = end.getTime() - start.getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      if (diffDays >= 0) setDuracao(String(diffDays));
+    if (ativoSelecionado?.tipo === 'EMBARCACAO') {
+      // Regra da Embarcação: Duração baseada no Horímetro
+      const hIni = Number(horimetroInicial.replace(',', '.')) || 0;
+      const hFim = Number(horimetroFinal.replace(',', '.')) || 0;
+      
+      if (hFim > hIni && hIni > 0) {
+        setDuracao(String(Number((hFim - hIni).toFixed(1))));
+      } else {
+        setDuracao("");
+      }
+    } else {
+      // Regra do Imóvel: Duração baseada em Check-in e Check-out
+      if (dataInicio && dataFim) {
+        const start = new Date(dataInicio);
+        const end = new Date(dataFim);
+        const diffTime = end.getTime() - start.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        if (diffDays >= 0) {
+          setDuracao(String(diffDays));
+        } else {
+          setDuracao("");
+        }
+      } else {
+        setDuracao("");
+      }
     }
-  }, [dataInicio, dataFim]);
+  }, [dataInicio, dataFim, horimetroInicial, horimetroFinal, ativoSelecionado]);
 
   // AUTOMAÇÃO DO VALOR LÍQUIDO
   useEffect(() => {
@@ -98,11 +120,14 @@ export default function ReceitasPage() {
     e.preventDefault();
     setCarregando(true);
 
+    // Se for embarcação, o passeio acontece no mesmo dia, logo data_fim = data_inicio
+    const finalDataFim = ativoSelecionado?.tipo === 'EMBARCACAO' ? dataInicio : dataFim;
+
     const { error } = await supabase.from("receitas").insert({
       ativo_id: Number(ativoId),
       cliente,
       data_inicio: dataInicio,
-      data_fim: dataFim,
+      data_fim: finalDataFim,
       duracao_medida: duracao ? Number(duracao.replace(',', '.')) : 0,
       valor_bruto: Number(valorBruto.replace(',', '.')),
       taxas_plataforma: taxaPlataforma ? Number(taxaPlataforma.replace(',', '.')) : 0,
@@ -116,7 +141,8 @@ export default function ReceitasPage() {
       alert("❌ Erro ao salvar receita: " + error.message);
     } else {
       setAtivoId(""); setCliente(""); setDataInicio(""); setDataFim(""); setDuracao("");
-      setValorBruto(""); setTaxaPlataforma(""); setTaxaLimpeza(""); setValorLiquido(0);
+      setHorimetroInicial(""); setHorimetroFinal(""); setValorBruto(""); setTaxaPlataforma(""); 
+      setTaxaLimpeza(""); setValorLiquido(0);
       carregarTabela();
     }
   }
@@ -137,7 +163,6 @@ export default function ReceitasPage() {
         <p className="text-sm text-slate-500 mt-1">Registre os aluguéis do Airbnb e os passeios das embarcações.</p>
       </div>
 
-      {/* FORMULÁRIO */}
       <Card>
         <CardHeader className="bg-slate-50 border-b border-slate-100 rounded-t-xl">
           <CardTitle className="text-lg text-slate-700">Novo Lançamento</CardTitle>
@@ -155,34 +180,69 @@ export default function ReceitasPage() {
               </div>
               <div>
                 <label className="text-sm font-semibold text-slate-700 mb-1 block">Cliente / Plataforma</label>
-                <input required type="text" placeholder="Ex: João - Airbnb" value={cliente} onChange={e => setCliente(e.target.value)}
+                <input required type="text" placeholder="Ex: João - Airbnb ou João - Jet" value={cliente} onChange={e => setCliente(e.target.value)}
                   className="w-full h-10 px-3 rounded-md border border-slate-200 focus:ring-2 focus:ring-blue-600 text-sm" />
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="text-sm font-semibold text-slate-700 mb-1 block">Data de Início (Check-in)</label>
-                <div className="relative">
-                  <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <input required type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)}
-                    className="w-full h-10 pl-9 pr-3 rounded-md border border-slate-200 focus:ring-2 focus:ring-blue-600 text-sm bg-white" />
+            {/* RENDERIZAÇÃO CONDICIONAL BASEADA NO TIPO DE ATIVO */}
+            {ativoSelecionado?.tipo === 'EMBARCACAO' ? (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
+                <div>
+                  <label className="text-sm font-semibold text-slate-700 mb-1 block">Data do Passeio</label>
+                  <div className="relative">
+                    <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input required type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)}
+                      className="w-full h-10 pl-9 pr-3 rounded-md border border-slate-200 focus:ring-2 focus:ring-blue-600 text-sm bg-white" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-slate-700 mb-1 block">Horímetro Inicial</label>
+                  <div className="relative">
+                    <PlayCircle className="w-4 h-4 text-blue-500 absolute left-3 top-3" />
+                    <input required type="number" step="0.1" placeholder="Ex: 150,5" value={horimetroInicial} onChange={e => setHorimetroInicial(e.target.value)}
+                      className="w-full h-10 pl-9 pr-3 rounded-md border border-slate-200 focus:ring-2 focus:ring-blue-600 text-sm bg-white" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-slate-700 mb-1 block">Horímetro Final</label>
+                  <div className="relative">
+                    <StopCircle className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                    <input required type="number" step="0.1" placeholder="Ex: 152,5" value={horimetroFinal} onChange={e => setHorimetroFinal(e.target.value)}
+                      className="w-full h-10 pl-9 pr-3 rounded-md border border-slate-200 focus:ring-2 focus:ring-blue-600 text-sm bg-white" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-bold text-blue-700 mb-1 block">Duração (Horas)</label>
+                  <input required readOnly type="text" placeholder="Calculado auto..." value={duracao}
+                    className="w-full h-10 px-3 rounded-md border border-blue-200 bg-blue-50/50 focus:ring-2 focus:ring-blue-600 text-sm font-bold text-slate-900 outline-none" />
                 </div>
               </div>
-              <div>
-                <label className="text-sm font-semibold text-slate-700 mb-1 block">Data Fim (Check-out)</label>
-                <div className="relative">
-                  <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <input required type="date" value={dataFim} onChange={e => setDataFim(e.target.value)}
-                    className="w-full h-10 pl-9 pr-3 rounded-md border border-slate-200 focus:ring-2 focus:ring-blue-600 text-sm bg-white" />
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="text-sm font-semibold text-slate-700 mb-1 block">Data de Início (Check-in)</label>
+                  <div className="relative">
+                    <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input required type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)}
+                      className="w-full h-10 pl-9 pr-3 rounded-md border border-slate-200 focus:ring-2 focus:ring-blue-600 text-sm bg-white" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-slate-700 mb-1 block">Data Fim (Check-out)</label>
+                  <div className="relative">
+                    <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input required type="date" value={dataFim} onChange={e => setDataFim(e.target.value)}
+                      className="w-full h-10 pl-9 pr-3 rounded-md border border-slate-200 focus:ring-2 focus:ring-blue-600 text-sm bg-white" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-bold text-blue-700 mb-1 block">Duração (Dias)</label>
+                  <input required readOnly type="text" placeholder="Calculado auto..." value={duracao}
+                    className="w-full h-10 px-3 rounded-md border border-blue-200 bg-blue-50/50 focus:ring-2 focus:ring-blue-600 text-sm font-bold text-slate-900 outline-none" />
                 </div>
               </div>
-              <div>
-                <label className="text-sm font-bold text-blue-700 mb-1 block">Duração (Dias / Horas)</label>
-                <input required type="number" step="0.1" placeholder="Calculado auto..." value={duracao} onChange={e => setDuracao(e.target.value)}
-                  className="w-full h-10 px-3 rounded-md border border-blue-200 bg-blue-50/50 focus:ring-2 focus:ring-blue-600 text-sm font-bold text-slate-900" />
-              </div>
-            </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
               <div>
@@ -220,7 +280,6 @@ export default function ReceitasPage() {
         </CardContent>
       </Card>
 
-      {/* HISTÓRICO COM FILTROS */}
       <Card>
         <CardHeader className="bg-slate-50 border-b border-slate-100 rounded-t-xl py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-center gap-2">
@@ -277,7 +336,7 @@ export default function ReceitasPage() {
               <tbody className="divide-y divide-slate-100">
                 {receitas.map((r) => {
                   const taxaTotal = Number(r.taxas_plataforma) + Number(r.taxas_limpeza);
-                  const metrica = r.ativos?.metrica_padrao === 'HORAS' ? 'hora' : 'dia';
+                  const metrica = r.ativos?.metrica_padrao === 'HORAS' || r.ativos?.tipo === 'EMBARCACAO' ? 'hora' : 'dia';
                   const valorDiaria = r.duracao_medida > 0 ? (Number(r.valor_liquido) / Number(r.duracao_medida)) : 0;
 
                   return (
@@ -285,7 +344,8 @@ export default function ReceitasPage() {
                       <td className="px-6 py-4 font-bold text-slate-800">{r.ativos?.nome}</td>
                       <td className="px-6 py-4 text-slate-600">{r.cliente}</td>
                       <td className="px-6 py-4 text-slate-500 text-xs">
-                        {r.data_inicio.split("-").reverse().join("/")} até {r.data_fim.split("-").reverse().join("/")}
+                        {r.data_inicio.split("-").reverse().join("/")} 
+                        {r.data_fim && r.data_fim !== r.data_inicio ? ` até ${r.data_fim.split("-").reverse().join("/")}` : ''}
                       </td>
                       <td className="px-6 py-4 text-center">
                         <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded font-medium text-xs">
